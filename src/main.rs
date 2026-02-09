@@ -75,6 +75,19 @@ fn dmi_info() -> DmiInfo {
 }
 
 #[derive(Serialize)]
+struct ProcInfo {
+    cmdline: String,
+}
+
+fn proc_info() -> ProcInfo {
+    let proc_path = |name: &str| format!("/proc/{name}");
+    let cat_proc = |name: &str| run_command_string("cat", &[&proc_path(name)]);
+    ProcInfo {
+        cmdline: cat_proc("cmdline"),
+    }
+}
+
+#[derive(Serialize)]
 struct CpuInfo {
     architecture: String,
     vendor_id: String,
@@ -299,6 +312,7 @@ fn pci_info() -> Vec<PciBusInfo> {
 struct SystemInfo {
     uname: UnameInfo,
     dmi: DmiInfo,
+    proc: ProcInfo,
     cpu: CpuInfo,
     lspci: Vec<PciBusInfo>,
 }
@@ -320,6 +334,7 @@ fn main() {
     let info = SystemInfo {
         uname: uname_info(),
         dmi: dmi_info(),
+        proc: proc_info(),
         cpu: cpu_info(),
         lspci: pci_info(),
     };
