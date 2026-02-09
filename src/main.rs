@@ -78,13 +78,21 @@ fn dmi_info() -> DmiInfo {
 struct ProcInfo {
     cmdline: String,
     meminfo: ProcMemInfo,
+    partitions: Vec<ProcPartitionInfo>,
+    version: String,
 }
 
 #[derive(Serialize)]
 struct ProcMemInfo {
     mem_total: String,
-    swap_total: String,
-    vmalloc_total: String,
+}
+
+#[derive(Serialize)]
+struct ProcPartitionInfo {
+    major: String,
+    minor: String,
+    blocks: String,
+    name: String,
 }
 
 fn parse_proc_meminfo(value: &str) -> ProcMemInfo {
@@ -97,9 +105,29 @@ fn parse_proc_meminfo(value: &str) -> ProcMemInfo {
     let get = |key: &str| items.get(key).cloned().unwrap_or_default();
     ProcMemInfo {
         mem_total: get("MemTotal"),
-        swap_total: get("SwapTotal"),
-        vmalloc_total: get("VmallocTotal"),
     }
+}
+
+fn parse_proc_partitions(value: &str) -> Vec<ProcPartitionInfo> {
+    let mut partitions = Vec::new();
+    for line in value.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("major") {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let (major, minor, blocks, name) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some(major), Some(minor), Some(blocks), Some(name)) => (major, minor, blocks, name),
+            _ => continue,
+        };
+        partitions.push(ProcPartitionInfo {
+            major: major.to_string(),
+            minor: minor.to_string(),
+            blocks: blocks.to_string(),
+            name: name.to_string(),
+        });
+    }
+    partitions
 }
 
 fn proc_info() -> ProcInfo {
@@ -108,6 +136,8 @@ fn proc_info() -> ProcInfo {
     ProcInfo {
         cmdline: cat_proc("cmdline"),
         meminfo: parse_proc_meminfo(&cat_proc("meminfo")),
+        partitions: parse_proc_partitions(&cat_proc("partitions")),
+        version: cat_proc("version"),
     }
 }
 
