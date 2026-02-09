@@ -1,4 +1,6 @@
 use serde::Serialize;
+use serde_json::ser::{PrettyFormatter, Serializer};
+use std::env;
 use std::process::Command;
 
 fn run_command_string(cmd: &str, args: &[&str]) -> String {
@@ -302,12 +304,36 @@ struct SystemInfo {
 }
 
 fn main() {
+    let mut pretty = false;
+    let mut indent = 4usize;
+    for arg in env::args().skip(1) {
+        if arg == "--pretty" {
+            pretty = true;
+        } else if let Some(value) = arg.strip_prefix("--indent=") {
+            if let Ok(parsed) = value.parse::<usize>() {
+                indent = parsed;
+            }
+            pretty = true;
+        }
+    }
+
     let info = SystemInfo {
         uname: uname_info(),
         dmi: dmi_info(),
         cpu: cpu_info(),
         lspci: pci_info(),
     };
-    let json = serde_json::to_string(&info).expect("failed to serialize JSON");
-    println!("{json}");
+    if pretty {
+        let mut out = Vec::new();
+        let indent_bytes = vec![b' '; indent];
+        let formatter = PrettyFormatter::with_indent(&indent_bytes);
+        let mut serializer = Serializer::with_formatter(&mut out, formatter);
+        info.serialize(&mut serializer)
+            .expect("failed to serialize JSON");
+        let json = String::from_utf8(out).expect("non-utf8 JSON output");
+        println!("{json}");
+    } else {
+        let json = serde_json::to_string(&info).expect("failed to serialize JSON");
+        println!("{json}");
+    }
 }
