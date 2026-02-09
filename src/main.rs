@@ -11,24 +11,62 @@ fn run_command_string(cmd: &str, args: &[&str]) -> String {
         .to_string()
 }
 
-fn kernel_release() -> String {
-    run_command_string("uname", &["-r"])
+#[derive(Serialize)]
+struct UnameInfo {
+    kernel_release: String,
+    machine: String,
 }
 
-fn machine_arch() -> String {
-    run_command_string("uname", &["-m"])
+fn uname_info() -> UnameInfo {
+    let kernel_release = || run_command_string("uname", &["-r"]);
+    let machine = || run_command_string("uname", &["-m"]);
+    UnameInfo {
+        kernel_release: kernel_release(),
+        machine: machine(),
+    }
+}
+
+#[derive(Serialize)]
+struct DmiInfo {
+    bios_date: String,
+    bios_vendor: String,
+    bios_version: String,
+    board_name: String,
+    board_vendor: String,
+    board_version: String,
+    product_name: String,
+    product_sku: String,
+    product_version: String,
+    sys_vendor: String,
+}
+
+fn dmi_info() -> DmiInfo {
+    let dmi_path = |name: &str| format!("/sys/class/dmi/id/{name}");
+    let cat_dmi = |name: &str| run_command_string("cat", &[&dmi_path(name)]);
+    DmiInfo {
+        bios_date: cat_dmi("bios_date"),
+        bios_vendor: cat_dmi("bios_vendor"),
+        bios_version: cat_dmi("bios_version"),
+        board_name: cat_dmi("board_name"),
+        board_vendor: cat_dmi("board_vendor"),
+        board_version: cat_dmi("board_version"),
+        product_name: cat_dmi("product_name"),
+        product_sku: cat_dmi("product_sku"),
+        product_version: cat_dmi("product_version"),
+        sys_vendor: cat_dmi("sys_vendor"),
+    }
 }
 
 #[derive(Serialize)]
 struct SystemInfo {
-    kernel_release: String,
-    machine_arch: String,
+    uname: UnameInfo,
+    dmi: DmiInfo,
 }
 
 fn main() {
     let info = SystemInfo {
-        kernel_release: kernel_release(),
-        machine_arch: machine_arch(),
+        uname: uname_info(),
+        dmi: dmi_info(),
     };
     let json = serde_json::to_string(&info).expect("failed to serialize JSON");
     println!("{json}");
