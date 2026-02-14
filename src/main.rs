@@ -143,7 +143,7 @@ fn env_info() -> EnvInfo {
 }
 
 #[derive(Serialize)]
-struct XInputDevice {
+struct XinputDeviceInfo {
     name: String,
     id: String,
     role: Option<String>,
@@ -175,7 +175,7 @@ fn parse_xinput_bracket(value: &str) -> (Option<String>, Option<String>, Option<
     (role, device_type, attached_to)
 }
 
-fn parse_xinput_list(output: &str) -> Vec<XInputDevice> {
+fn parse_xinput_list(output: &str) -> Vec<XinputDeviceInfo> {
     let mut devices = Vec::new();
     for line in output.lines() {
         if !line.contains("id=") {
@@ -205,7 +205,7 @@ fn parse_xinput_list(output: &str) -> Vec<XInputDevice> {
             }
         }
 
-        devices.push(XInputDevice {
+        devices.push(XinputDeviceInfo {
             name,
             id,
             role,
@@ -216,8 +216,75 @@ fn parse_xinput_list(output: &str) -> Vec<XInputDevice> {
     devices
 }
 
-fn xinput_info() -> Option<Vec<XInputDevice>> {
-    run_command_optional("xinput", &["list"]).map(|out| parse_xinput_list(&out))
+#[derive(Serialize)]
+struct XinputInfo {
+    devices: Option<Vec<XinputDeviceInfo>>,
+}
+
+fn xinput_info() -> XinputInfo {
+    let devices = run_command_optional("xinput", &["list"]).map(|out| parse_xinput_list(&out));
+    XinputInfo { devices }
+}
+
+#[derive(Serialize)]
+struct XrandrMonitorInfo {
+    index: u32,
+    name: String,
+    geometry: String,
+}
+
+#[derive(Serialize)]
+struct XrandrInfo {
+    monitors: Option<Vec<XrandrMonitorInfo>>,
+}
+
+fn parse_xrandr_listmonitors(output: &str) -> Vec<XrandrMonitorInfo> {
+    let mut monitors = Vec::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("Monitors:") {
+            continue;
+        }
+        let (index_part, rest) = match line.split_once(':') {
+            Some(parts) => parts,
+            None => continue,
+        };
+        let index = match index_part.trim().parse::<u32>() {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let mut parts: Vec<&str> = rest.trim().split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let name = parts.pop().unwrap().to_string();
+        let geometry = parts.join(" ");
+        monitors.push(XrandrMonitorInfo {
+            index,
+            name,
+            geometry,
+        });
+    }
+    monitors
+}
+
+fn xrandr_info() -> XrandrInfo {
+    let monitors = run_command_optional("xrandr", &["--listmonitors"])
+        .map(|out| parse_xrandr_listmonitors(&out));
+    XrandrInfo { monitors }
+}
+
+#[derive(Serialize)]
+struct X11Info {
+    xinput: XinputInfo,
+    xrandr: XrandrInfo,
+}
+
+fn x11_info() -> X11Info {
+    X11Info {
+        xinput: xinput_info(),
+        xrandr: xrandr_info(),
+    }
 }
 
 #[derive(Serialize)]
@@ -562,7 +629,7 @@ struct SystemInfo {
     user: UserPasswdInfo,
     xdg: XdgInfo,
     env: EnvInfo,
-    xinput: Option<Vec<XInputDevice>>,
+    x11: X11Info,
     uname: UnameInfo,
     dmi: DmiInfo,
     proc: ProcInfo,
@@ -588,7 +655,7 @@ fn main() {
         user: user_passwd_info(),
         xdg: xdg_info(),
         env: env_info(),
-        xinput: xinput_info(),
+        x11: x11_info(),
         uname: uname_info(),
         dmi: dmi_info(),
         proc: proc_info(),
