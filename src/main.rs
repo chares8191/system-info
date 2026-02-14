@@ -4,13 +4,24 @@ use std::env;
 use std::process::Command;
 
 fn run_command_string(cmd: &str, args: &[&str]) -> String {
-    let output = Command::new(cmd)
-        .args(args)
-        .output()
-        .expect("failed to run command");
-    String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string()
+    let output = match Command::new(cmd).args(args).output() {
+        Ok(output) => output,
+        Err(_) => return String::new(),
+    };
+    String::from_utf8_lossy(&output.stdout).trim_end().to_string()
+}
+
+fn run_command_optional(cmd: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(cmd).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 fn command_colon_field(cmd: &str, args: &[&str], label: &str) -> String {
@@ -26,6 +37,187 @@ fn command_colon_field(cmd: &str, args: &[&str], label: &str) -> String {
         }
     }
     String::new()
+}
+
+fn trim_tree_prefix(value: &str) -> &str {
+    value.trim_start_matches(|c: char| {
+        c == '⎡' || c == '⎜' || c == '⎣' || c == '↳' || c.is_whitespace()
+    })
+}
+
+fn current_username() -> String {
+    env::var("USER").unwrap_or_else(|_| run_command_string("id", &["-un"]))
+}
+
+fn env_var_opt(name: &str) -> Option<String> {
+    env::var(name).ok()
+}
+
+#[derive(Serialize)]
+struct UserPasswdInfo {
+    username: String,
+    uid: String,
+    gid: String,
+    home_directory: String,
+    login_shell: String,
+}
+
+fn parse_passwd_line(line: &str) -> UserPasswdInfo {
+    let mut parts = line.split(':');
+    let username = parts.next().unwrap_or_default().to_string();
+    let _password = parts.next().unwrap_or_default();
+    let uid = parts.next().unwrap_or_default().to_string();
+    let gid = parts.next().unwrap_or_default().to_string();
+    let _gecos = parts.next().unwrap_or_default();
+    let home_directory = parts.next().unwrap_or_default().to_string();
+    let login_shell = parts.next().unwrap_or_default().to_string();
+    UserPasswdInfo {
+        username,
+        uid,
+        gid,
+        home_directory,
+        login_shell,
+    }
+}
+
+fn user_passwd_info() -> UserPasswdInfo {
+    let user = current_username();
+    let line = run_command_string("getent", &["passwd", &user]);
+    parse_passwd_line(&line)
+}
+
+#[derive(Serialize)]
+struct XdgInfo {
+    xdg_cache_home: Option<String>,
+    xdg_config_home: Option<String>,
+    xdg_data_home: Option<String>,
+    xdg_runtime_dir: Option<String>,
+    xdg_seat: Option<String>,
+    xdg_session_class: Option<String>,
+    xdg_session_id: Option<String>,
+    xdg_session_type: Option<String>,
+    xdg_state_home: Option<String>,
+    xdg_vtnr: Option<String>,
+}
+
+fn xdg_info() -> XdgInfo {
+    XdgInfo {
+        xdg_cache_home: env_var_opt("XDG_CACHE_HOME"),
+        xdg_config_home: env_var_opt("XDG_CONFIG_HOME"),
+        xdg_data_home: env_var_opt("XDG_DATA_HOME"),
+        xdg_runtime_dir: env_var_opt("XDG_RUNTIME_DIR"),
+        xdg_seat: env_var_opt("XDG_SEAT"),
+        xdg_session_class: env_var_opt("XDG_SESSION_CLASS"),
+        xdg_session_id: env_var_opt("XDG_SESSION_ID"),
+        xdg_session_type: env_var_opt("XDG_SESSION_TYPE"),
+        xdg_state_home: env_var_opt("XDG_STATE_HOME"),
+        xdg_vtnr: env_var_opt("XDG_VTNR"),
+    }
+}
+
+#[derive(Serialize)]
+struct EnvInfo {
+    user: Option<String>,
+    logname: Option<String>,
+    home: Option<String>,
+    shell: Option<String>,
+    path: Option<String>,
+    lang: Option<String>,
+    lc_all: Option<String>,
+    lc_ctype: Option<String>,
+    term: Option<String>,
+}
+
+fn env_info() -> EnvInfo {
+    EnvInfo {
+        user: env_var_opt("USER"),
+        logname: env_var_opt("LOGNAME"),
+        home: env_var_opt("HOME"),
+        shell: env_var_opt("SHELL"),
+        path: env_var_opt("PATH"),
+        lang: env_var_opt("LANG"),
+        lc_all: env_var_opt("LC_ALL"),
+        lc_ctype: env_var_opt("LC_CTYPE"),
+        term: env_var_opt("TERM"),
+    }
+}
+
+#[derive(Serialize)]
+struct XInputDevice {
+    name: String,
+    id: String,
+    role: Option<String>,
+    device_type: Option<String>,
+    attached_to: Option<String>,
+}
+
+fn parse_xinput_bracket(value: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let mut role = None;
+    let mut device_type = None;
+    let mut attached_to = None;
+
+    let mut content = value.trim();
+    if let Some(lb) = content.rfind('(') {
+        if let Some(rb) = content[lb + 1..].find(')') {
+            attached_to = Some(content[lb + 1..lb + 1 + rb].trim().to_string());
+            content = content[..lb].trim_end();
+        }
+    }
+
+    let mut parts = content.split_whitespace();
+    if let Some(first) = parts.next() {
+        role = Some(first.to_string());
+    }
+    if let Some(second) = parts.next() {
+        device_type = Some(second.to_string());
+    }
+
+    (role, device_type, attached_to)
+}
+
+fn parse_xinput_list(output: &str) -> Vec<XInputDevice> {
+    let mut devices = Vec::new();
+    for line in output.lines() {
+        if !line.contains("id=") {
+            continue;
+        }
+        let (left, right) = match line.split_once("id=") {
+            Some(parts) => parts,
+            None => continue,
+        };
+        let name = trim_tree_prefix(left).trim().to_string();
+        let mut right_parts = right.split_whitespace();
+        let id = match right_parts.next() {
+            Some(value) => value.to_string(),
+            None => continue,
+        };
+
+        let mut role = None;
+        let mut device_type = None;
+        let mut attached_to = None;
+        if let Some(lb) = line.find('[') {
+            if let Some(rb) = line[lb + 1..].find(']') {
+                let bracket = &line[lb + 1..lb + 1 + rb];
+                let parsed = parse_xinput_bracket(bracket);
+                role = parsed.0;
+                device_type = parsed.1;
+                attached_to = parsed.2;
+            }
+        }
+
+        devices.push(XInputDevice {
+            name,
+            id,
+            role,
+            device_type,
+            attached_to,
+        });
+    }
+    devices
+}
+
+fn xinput_info() -> Option<Vec<XInputDevice>> {
+    run_command_optional("xinput", &["list"]).map(|out| parse_xinput_list(&out))
 }
 
 #[derive(Serialize)]
@@ -116,10 +308,13 @@ fn parse_proc_partitions(value: &str) -> Vec<ProcPartitionInfo> {
             continue;
         }
         let mut parts = line.split_whitespace();
-        let (major, minor, blocks, name) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
-            (Some(major), Some(minor), Some(blocks), Some(name)) => (major, minor, blocks, name),
-            _ => continue,
-        };
+        let (major, minor, blocks, name) =
+            match (parts.next(), parts.next(), parts.next(), parts.next()) {
+                (Some(major), Some(minor), Some(blocks), Some(name)) => {
+                    (major, minor, blocks, name)
+                }
+                _ => continue,
+            };
         partitions.push(ProcPartitionInfo {
             major: major.to_string(),
             minor: minor.to_string(),
@@ -364,6 +559,10 @@ fn pci_info() -> Vec<PciBusInfo> {
 
 #[derive(Serialize)]
 struct SystemInfo {
+    user: UserPasswdInfo,
+    xdg: XdgInfo,
+    env: EnvInfo,
+    xinput: Option<Vec<XInputDevice>>,
     uname: UnameInfo,
     dmi: DmiInfo,
     proc: ProcInfo,
@@ -386,6 +585,10 @@ fn main() {
     }
 
     let info = SystemInfo {
+        user: user_passwd_info(),
+        xdg: xdg_info(),
+        env: env_info(),
+        xinput: xinput_info(),
         uname: uname_info(),
         dmi: dmi_info(),
         proc: proc_info(),
