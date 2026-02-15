@@ -8,7 +8,9 @@ fn run_command_string(cmd: &str, args: &[&str]) -> String {
         Ok(output) => output,
         Err(_) => return String::new(),
     };
-    String::from_utf8_lossy(&output.stdout).trim_end().to_string()
+    String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string()
 }
 
 fn run_command_optional(cmd: &str, args: &[&str]) -> Option<String> {
@@ -16,7 +18,9 @@ fn run_command_optional(cmd: &str, args: &[&str]) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
+    let text = String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string();
     if text.is_empty() {
         None
     } else {
@@ -140,6 +144,86 @@ fn env_info() -> EnvInfo {
         lc_ctype: env_var_opt("LC_CTYPE"),
         term: env_var_opt("TERM"),
     }
+}
+
+#[derive(Serialize)]
+struct BlockDeviceInfo {
+    name: String,
+    path: String,
+    maj_min: String,
+    rm: String,
+    size: String,
+    ro: String,
+    dev_type: String,
+    fsroots: String,
+    fstype: String,
+    fsver: String,
+    label: String,
+    uuid: String,
+    fsused: String,
+    fssize: String,
+    mountpoints: String,
+}
+
+fn lsblk_info() -> Vec<BlockDeviceInfo> {
+    let output = match run_command_optional(
+        "lsblk",
+        &[
+            "--json",
+            "--list",
+            "-o",
+            "NAME,PATH,MAJ:MIN,RM,SIZE,RO,TYPE,MOUNTPOINTS,FSROOTS,FSTYPE,FSVER,LABEL,UUID,FSUSED,FSSIZE",
+        ],
+    ) {
+        Some(output) => output,
+        None => return Vec::new(),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&output) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    let devices = match parsed.get("blockdevices").and_then(|v| v.as_array()) {
+        Some(list) => list,
+        None => return Vec::new(),
+    };
+    let value_to_string = |value: Option<&serde_json::Value>| -> String {
+        match value {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(serde_json::Value::Bool(b)) => b.to_string(),
+            Some(serde_json::Value::Number(n)) => n.to_string(),
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => String::new(),
+        }
+    };
+    let mut out = Vec::new();
+    for dev in devices {
+        let obj = match dev.as_object() {
+            Some(obj) => obj,
+            None => continue,
+        };
+        out.push(BlockDeviceInfo {
+            name: value_to_string(obj.get("name")),
+            path: value_to_string(obj.get("path")),
+            maj_min: value_to_string(obj.get("maj:min")),
+            rm: value_to_string(obj.get("rm")),
+            size: value_to_string(obj.get("size")),
+            ro: value_to_string(obj.get("ro")),
+            dev_type: value_to_string(obj.get("type")),
+            fsroots: value_to_string(obj.get("fsroots")),
+            fstype: value_to_string(obj.get("fstype")),
+            fsver: value_to_string(obj.get("fsver")),
+            label: value_to_string(obj.get("label")),
+            uuid: value_to_string(obj.get("uuid")),
+            fsused: value_to_string(obj.get("fsused")),
+            fssize: value_to_string(obj.get("fssize")),
+            mountpoints: value_to_string(obj.get("mountpoints")),
+        });
+    }
+    out
 }
 
 #[derive(Serialize)]
@@ -337,21 +421,12 @@ fn dmi_info() -> DmiInfo {
 struct ProcInfo {
     cmdline: String,
     meminfo: ProcMemInfo,
-    partitions: Vec<ProcPartitionInfo>,
     version: String,
 }
 
 #[derive(Serialize)]
 struct ProcMemInfo {
     mem_total: String,
-}
-
-#[derive(Serialize)]
-struct ProcPartitionInfo {
-    major: String,
-    minor: String,
-    blocks: String,
-    name: String,
 }
 
 fn parse_proc_meminfo(value: &str) -> ProcMemInfo {
@@ -367,38 +442,12 @@ fn parse_proc_meminfo(value: &str) -> ProcMemInfo {
     }
 }
 
-fn parse_proc_partitions(value: &str) -> Vec<ProcPartitionInfo> {
-    let mut partitions = Vec::new();
-    for line in value.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("major") {
-            continue;
-        }
-        let mut parts = line.split_whitespace();
-        let (major, minor, blocks, name) =
-            match (parts.next(), parts.next(), parts.next(), parts.next()) {
-                (Some(major), Some(minor), Some(blocks), Some(name)) => {
-                    (major, minor, blocks, name)
-                }
-                _ => continue,
-            };
-        partitions.push(ProcPartitionInfo {
-            major: major.to_string(),
-            minor: minor.to_string(),
-            blocks: blocks.to_string(),
-            name: name.to_string(),
-        });
-    }
-    partitions
-}
-
 fn proc_info() -> ProcInfo {
     let proc_path = |name: &str| format!("/proc/{name}");
     let cat_proc = |name: &str| run_command_string("cat", &[&proc_path(name)]);
     ProcInfo {
         cmdline: cat_proc("cmdline"),
         meminfo: parse_proc_meminfo(&cat_proc("meminfo")),
-        partitions: parse_proc_partitions(&cat_proc("partitions")),
         version: cat_proc("version"),
     }
 }
@@ -629,6 +678,7 @@ struct SystemInfo {
     user: UserPasswdInfo,
     xdg: XdgInfo,
     env: EnvInfo,
+    lsblk: Vec<BlockDeviceInfo>,
     x11: X11Info,
     uname: UnameInfo,
     dmi: DmiInfo,
@@ -655,6 +705,7 @@ fn main() {
         user: user_passwd_info(),
         xdg: xdg_info(),
         env: env_info(),
+        lsblk: lsblk_info(),
         x11: x11_info(),
         uname: uname_info(),
         dmi: dmi_info(),
