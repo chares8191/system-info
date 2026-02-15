@@ -420,6 +420,38 @@ fn xrandr_info() -> XrandrInfo {
 }
 
 #[derive(Serialize)]
+struct XdpyInfo {
+    dimensions: Option<String>,
+    resolution: Option<String>,
+}
+
+fn xdpy_info() -> XdpyInfo {
+    let output = run_command_optional("xdpyinfo", &[]).unwrap_or_default();
+    let mut dimensions = None;
+    let mut resolution = None;
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("dimensions:") {
+            let value = rest.trim();
+            if !value.is_empty() {
+                dimensions = Some(value.to_string());
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("resolution:") {
+            let value = rest.trim();
+            if !value.is_empty() {
+                resolution = Some(value.to_string());
+            }
+        }
+    }
+    XdpyInfo {
+        dimensions,
+        resolution,
+    }
+}
+
+#[derive(Serialize)]
 struct XrdbInfo {
     resources: Vec<String>,
 }
@@ -440,6 +472,7 @@ struct X11Info {
     xinput: XinputInfo,
     xrandr: XrandrInfo,
     xrdb: XrdbInfo,
+    xdpyinfo: XdpyInfo,
 }
 
 fn x11_info() -> X11Info {
@@ -447,6 +480,7 @@ fn x11_info() -> X11Info {
         xinput: xinput_info(),
         xrandr: xrandr_info(),
         xrdb: xrdb_info(),
+        xdpyinfo: xdpy_info(),
     }
 }
 
