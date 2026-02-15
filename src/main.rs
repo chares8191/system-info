@@ -452,6 +452,43 @@ fn xdpy_info() -> XdpyInfo {
 }
 
 #[derive(Serialize)]
+struct KernelModuleInfo {
+    module: String,
+    size: String,
+    used_by_count: String,
+    used_by: Vec<String>,
+}
+
+fn parse_lsmod_line(line: &str) -> Option<KernelModuleInfo> {
+    let mut parts = line.split_whitespace();
+    let module = parts.next()?.to_string();
+    let size = parts.next()?.to_string();
+    let used_by_count = parts.next()?.to_string();
+    let used_by_raw = parts.collect::<Vec<&str>>().join(" ");
+    let used_by = used_by_raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    Some(KernelModuleInfo {
+        module,
+        size,
+        used_by_count,
+        used_by,
+    })
+}
+
+fn lsmod_info() -> Vec<KernelModuleInfo> {
+    let output = run_command_string("lsmod", &[]);
+    output
+        .lines()
+        .skip(1)
+        .filter_map(parse_lsmod_line)
+        .collect()
+}
+
+#[derive(Serialize)]
 struct XrdbInfo {
     resources: Vec<String>,
 }
@@ -788,18 +825,19 @@ fn pci_info() -> Vec<PciBusInfo> {
 
 #[derive(Serialize)]
 struct SystemInfo {
+    uname: UnameInfo,
     user: UserPasswdInfo,
-    xdg: XdgInfo,
     env: EnvInfo,
-    lsblk: Vec<BlockDeviceInfo>,
-    pacman: PacmanInfo,
+    dmi: DmiInfo,
+    xdg: XdgInfo,
+    cpu: CpuInfo,
+    proc: ProcInfo,
     mkinitcpio: MkinitcpioInfo,
     x11: X11Info,
-    uname: UnameInfo,
-    dmi: DmiInfo,
-    proc: ProcInfo,
-    cpu: CpuInfo,
+    pacman: PacmanInfo,
+    lsblk: Vec<BlockDeviceInfo>,
     lspci: Vec<PciBusInfo>,
+    lsmod: Vec<KernelModuleInfo>,
 }
 
 fn main() {
@@ -817,18 +855,19 @@ fn main() {
     }
 
     let info = SystemInfo {
+        uname: uname_info(),
         user: user_passwd_info(),
-        xdg: xdg_info(),
         env: env_info(),
-        lsblk: lsblk_info(),
-        pacman: pacman_info(),
+        dmi: dmi_info(),
+        xdg: xdg_info(),
+        cpu: cpu_info(),
+        proc: proc_info(),
         mkinitcpio: mkinitcpio_info(),
         x11: x11_info(),
-        uname: uname_info(),
-        dmi: dmi_info(),
-        proc: proc_info(),
-        cpu: cpu_info(),
+        pacman: pacman_info(),
+        lsblk: lsblk_info(),
         lspci: pci_info(),
+        lsmod: lsmod_info(),
     };
     if pretty {
         let mut out = Vec::new();
