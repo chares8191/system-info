@@ -162,6 +162,12 @@ struct BlockDeviceInfo {
     uuid: String,
     fsused: String,
     fssize: String,
+    pkname: String,
+    partuuid: String,
+    parttype: String,
+    parttypename: String,
+    pttype: String,
+    ptuuid: String,
     mountpoints: String,
 }
 
@@ -172,7 +178,7 @@ fn lsblk_info() -> Vec<BlockDeviceInfo> {
             "--json",
             "--list",
             "-o",
-            "NAME,PATH,MAJ:MIN,RM,SIZE,RO,TYPE,MOUNTPOINTS,FSROOTS,FSTYPE,FSVER,LABEL,UUID,FSUSED,FSSIZE",
+            "NAME,PATH,MAJ:MIN,RM,SIZE,RO,TYPE,MOUNTPOINTS,FSROOTS,FSTYPE,FSVER,LABEL,UUID,FSUSED,FSSIZE,PKNAME,PARTUUID,PARTTYPE,PARTTYPENAME,PTTYPE,PTUUID",
         ],
     ) {
         Some(output) => output,
@@ -220,10 +226,65 @@ fn lsblk_info() -> Vec<BlockDeviceInfo> {
             uuid: value_to_string(obj.get("uuid")),
             fsused: value_to_string(obj.get("fsused")),
             fssize: value_to_string(obj.get("fssize")),
+            pkname: value_to_string(obj.get("pkname")),
+            partuuid: value_to_string(obj.get("partuuid")),
+            parttype: value_to_string(obj.get("parttype")),
+            parttypename: value_to_string(obj.get("parttypename")),
+            pttype: value_to_string(obj.get("pttype")),
+            ptuuid: value_to_string(obj.get("ptuuid")),
             mountpoints: value_to_string(obj.get("mountpoints")),
         });
     }
     out
+}
+
+#[derive(Serialize)]
+struct MkinitcpioInfo {
+    modules: Vec<String>,
+    hooks: Vec<String>,
+}
+
+fn parse_mkinitcpio_list(line: &str) -> Vec<String> {
+    let start = match line.find('(') {
+        Some(pos) => pos + 1,
+        None => return Vec::new(),
+    };
+    let end = match line.rfind(')') {
+        Some(pos) if pos > start => pos,
+        _ => return Vec::new(),
+    };
+    line[start..end]
+        .split_whitespace()
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+fn mkinitcpio_info() -> MkinitcpioInfo {
+    let modules_line = run_command_optional("grep", &["-E", "^MODULES=", "/etc/mkinitcpio.conf"])
+        .unwrap_or_default();
+    let hooks_line = run_command_optional("grep", &["-E", "^HOOKS=", "/etc/mkinitcpio.conf"])
+        .unwrap_or_default();
+    MkinitcpioInfo {
+        modules: parse_mkinitcpio_list(&modules_line),
+        hooks: parse_mkinitcpio_list(&hooks_line),
+    }
+}
+
+#[derive(Serialize)]
+struct PacmanInfo {
+    explicit: Vec<String>,
+}
+
+fn pacman_info() -> PacmanInfo {
+    let output = run_command_optional("pacman", &["-Qe"]).unwrap_or_default();
+    let explicit = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect();
+    PacmanInfo { explicit }
 }
 
 #[derive(Serialize)]
@@ -679,6 +740,8 @@ struct SystemInfo {
     xdg: XdgInfo,
     env: EnvInfo,
     lsblk: Vec<BlockDeviceInfo>,
+    pacman: PacmanInfo,
+    mkinitcpio: MkinitcpioInfo,
     x11: X11Info,
     uname: UnameInfo,
     dmi: DmiInfo,
@@ -706,6 +769,8 @@ fn main() {
         xdg: xdg_info(),
         env: env_info(),
         lsblk: lsblk_info(),
+        pacman: pacman_info(),
+        mkinitcpio: mkinitcpio_info(),
         x11: x11_info(),
         uname: uname_info(),
         dmi: dmi_info(),
