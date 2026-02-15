@@ -420,15 +420,33 @@ fn xrandr_info() -> XrandrInfo {
 }
 
 #[derive(Serialize)]
+struct XrdbInfo {
+    resources: Vec<String>,
+}
+
+fn xrdb_info() -> XrdbInfo {
+    let resources = run_command_optional("xrdb", &["-query"])
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect();
+    XrdbInfo { resources }
+}
+
+#[derive(Serialize)]
 struct X11Info {
     xinput: XinputInfo,
     xrandr: XrandrInfo,
+    xrdb: XrdbInfo,
 }
 
 fn x11_info() -> X11Info {
     X11Info {
         xinput: xinput_info(),
         xrandr: xrandr_info(),
+        xrdb: xrdb_info(),
     }
 }
 
